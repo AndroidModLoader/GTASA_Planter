@@ -37,6 +37,11 @@ jobs:
         git clone ssh://git@github.com/RusJJ/GTASAAndroid_Structs.git ./structs
         mv ./structs/* ./
 
+    - name: Get SAUtils...
+      uses: wei/wget@v1
+      with:
+        args: -O ./isautils.h https://github.com/AndroidModLoader/SAUtils/raw/main/isautils.h
+
     - name: Install Android NDK (r25c)...
       uses: nttld/setup-ndk@v1.2.0
       with:
