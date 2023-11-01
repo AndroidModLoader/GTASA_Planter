@@ -281,17 +281,15 @@ inline bool GeometrySetPrelitConstantColor(RpGeometry* geometry, CRGBA clr)
     RpGeometryUnlock(geometry);
     return true;
 }
-inline void GeometrySetPrelitConstantColorForce(RpGeometry* geometry, CRGBA clr)
+inline void RepaintGrassPrelit(RpGeometry* geometry, RwRGBA clr)
 {
+    RpGeometryLock(geometry, 4095);
+    
     RwRGBA* prelitClrPtr = geometry->preLitLum;
-    if(prelitClrPtr)
-    {
-        RwInt32 numPrelit = geometry->numVertices;
-        for(int i = 0; i < numPrelit; ++i)
-        {
-            prelitClrPtr[i] = *(RwRGBA*)&clr;
-        }
-    }
+    RwInt32 numPrelit = geometry->numVertices;
+    for(int i = 0; i < numPrelit; ++i) prelitClrPtr[i] = clr;
+    
+    RpGeometryUnlock(geometry);
 }
 inline float GetPlantDensity(CPlantLocTri* plant)
 {
@@ -399,9 +397,9 @@ uintptr_t GrassMaterialApplying_BackTo;
 extern "C" void GrassMaterialApplying(RpGeometry* geometry, PPTriPlant* plant)
 {
     // ULTRA EXPERIMENTAL AND DUMB WAY!
-    CRGBA newGrassCol = *(CRGBA*)&plant->color;
-    newGrassCol.a = 255;
-    GeometrySetPrelitConstantColorForce(geometry, newGrassCol);
+    RwRGBA newGrassCol = plant->color;
+    newGrassCol.alpha = 255;
+    RepaintGrassPrelit(geometry, newGrassCol);
     // ULTRA EXPERIMENTAL AND DUMB WAY!
 
     RpGeometryForAllMaterials(geometry, SetGrassModelProperties, plant);
@@ -449,6 +447,10 @@ DECL_HOOKv(PlantMgrRender)
 
         while(plantTris != NULL)
         {
+            float intens = lerp(0.0333333f * plantTris->m_ColLighting.day,
+                                0.0833333f * plantTris->m_ColLighting.night,
+                                *m_fDNBalanceParam);
+
             CPlantSurfProp* surface = GetSurfacePtr(plantTris->m_nSurfaceType);
             if(surface && IsSphereVisibleForCamera(TheCamera, &plantTris->m_Center, plantTris->m_SphereRadius))
             {
@@ -472,17 +474,10 @@ DECL_HOOKv(PlantMgrRender)
                     plant.scale_var_z = surfProp.m_fSizeScaleZVariation;
                     plant.wind_bend_scale = surfProp.m_fWindBendingScale;
                     plant.wind_bend_var = surfProp.m_fWindBendingVariation;
-    
-                    float intens = lerp(0.0333333f * plantTris->m_ColLighting.day,
-                                        0.0333333f * plantTris->m_ColLighting.night,
-                                        *m_fDNBalanceParam);
                     
                     plant.color.red *= intens;
                     plant.color.green *= intens;
                     plant.color.blue *= intens;
-
-                    //int newal = plant.color.alpha + 80;
-                    //plant.color.alpha = newal > 255 ? 255 : newal;
 
                     AddTriPlant(&plant, type);
                 }
@@ -513,7 +508,7 @@ void OnGrassQualityChanged(int oldVal, int newVal, void* data)
 // ---------------------------------------------------------------------------------------
 
 
-extern "C" void OnModLoad()
+__attribute__ ((visibility ("default"))) extern "C" void OnModLoad()
 {
     logger->SetTag("SA Planter");
     
