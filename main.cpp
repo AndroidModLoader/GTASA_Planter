@@ -11,7 +11,7 @@
 #endif
 #include "isautils.h"
 
-MYMODCFG(net.rusjj.plantes, GTASA Planter, 1.0, RusJJ)
+MYMODCFG(net.rusjj.plantes, GTASA Planter, 1.1, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
 
 uintptr_t pGTASA;
@@ -20,6 +20,7 @@ ISAUtils* sautils;
 
 #define MAXLOCTRIS 4
 #define GRASS_MODELS_TAB 4
+//#define EXTREME_OPTIMISATIONS
 
 
 // ---------------------------------------------------------------------------------------
@@ -39,15 +40,23 @@ const char* grassMdls2[GRASS_MODELS_TAB] =
     "models\\grass\\grass1_3.dff",
     "models\\grass\\grass1_4.dff",
 };
-const char* aGrassQualitySwitch[4] = 
+const char* aGrassDistanceSwitch[4] = 
 {
     "FED_FXL",
     "FED_FXM",
     "FED_FXH",
     "FED_FXV",
 };
+const char* aGrassQualitySwitch[2] = 
+{
+    "FED_FXL",
+    "FED_FXH",
+};
 RwTexture* tex_gras07Si;
+ConfigEntry* cfgGrassDistance;
 ConfigEntry* cfgGrassQuality;
+float fGrassDistance = 45.0f;
+RwCullMode eGrassCulling = rwCULLMODECULLNONE;
 
 
 // ---------------------------------------------------------------------------------------
@@ -283,18 +292,15 @@ inline bool GeometrySetPrelitConstantColor(RpGeometry* geometry, CRGBA clr)
 }
 inline void RepaintGrassPrelit(RpGeometry* geometry, RwRGBA clr)
 {
-    RpGeometryLock(geometry, 4095);
-    
     RwRGBA* prelitClrPtr = geometry->preLitLum;
+
+    // Not going to re prelit the whole model as it`s already done!
+    if(*(int*)prelitClrPtr == *(int*)&clr) return;
+
+    RpGeometryLock(geometry, 4095);
     RwInt32 numPrelit = geometry->numVertices;
     for(int i = 0; i < numPrelit; ++i) prelitClrPtr[i] = clr;
-    
     RpGeometryUnlock(geometry);
-}
-inline float GetPlantDensity(CPlantLocTri* plant)
-{
-    // The magnitude of the cross product of 2 vectors give the area of a paralellogram they span.
-    return (plant->m_V2 - plant->m_V1).Cross(plant->m_V3 - plant->m_V1).Magnitude() / 2.f;
 }
 inline RpMaterial* SetDefaultGrassMaterial(RpMaterial* material, void* rgba)
 {
@@ -372,19 +378,25 @@ void InitPlantManager()
         SetPlantModelsTab(2, PC_PlantModelSlotTab[0]);
         SetPlantModelsTab(3, PC_PlantModelSlotTab[0]);
         //SetCloseFarAlphaDist(3.0f, 60.0f);
-        SetCloseFarAlphaDist(3.0f, 22.0f * powf(2.0, cfgGrassQuality->GetInt()));
+        SetCloseFarAlphaDist(3.0f, fGrassDistance);
     }
 }
 inline float lerp(float a, float b, float t)
 {
     return a + t * (b - a);
 }
+inline float GetCurrentLighting(tColLighting col, float fScale = 0.5f)
+{
+    const float fDay = col.day * fScale / 15.0f;
+    const float fNight = col.night * fScale / 15.0f;
+    return lerp(fDay, fNight, *m_fDNBalanceParam);
+}
 RpMaterial* SetGrassModelProperties(RpMaterial* material, void* data)
 {
     PPTriPlant* plant = (PPTriPlant*)data;
     material->texture = plant->texture_ptr;
     material->color   = plant->color;
-    //RpMaterialSetTexture(material, plant->texture_ptr); // Deletes previous texture, SUS BEHAVIOUR
+    // RpMaterialSetTexture(material, plant->texture_ptr); // Deletes previous texture, SUS BEHAVIOUR
     // UPD: This is normal. But we need to keep our texture FOREVER. So not deleting it. EVER.
     return material;
 }
@@ -429,16 +441,18 @@ DECL_HOOKv(PlantMgrInit)
 }
 DECL_HOOKv(PlantMgrRender)
 {
-    PPTriPlant plant;
+    static PPTriPlant plant;
     
     RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)false);
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)true);
-    RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)true);
+    RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)false);
     RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDSRCALPHA);
     RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
     RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)true);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTIONREF, (void*)false);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTION, (void*)rwALPHATESTFUNCTIONALWAYS);
+    // new
+    RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)eGrassCulling);
 
     for(int type = 0; type < MAXLOCTRIS; ++type)
     {
@@ -447,39 +461,59 @@ DECL_HOOKv(PlantMgrRender)
 
         while(plantTris != NULL)
         {
-            float intens = lerp(0.0333333f * plantTris->m_ColLighting.day,
-                                0.0833333f * plantTris->m_ColLighting.night,
-                                *m_fDNBalanceParam);
-
-            CPlantSurfProp* surface = GetSurfacePtr(plantTris->m_nSurfaceType);
-            if(surface && IsSphereVisibleForCamera(TheCamera, &plantTris->m_Center, plantTris->m_SphereRadius))
+            if(plantTris->m_createsPlants)
             {
-                CPlantSurfPropPlantData& surfProp = surface->m_aSurfaceProperties[0];
-                //if(surfProp.m_nModelId != -1)
+                float colBrightness = GetCurrentLighting(plantTris->m_ColLighting);
+                CPlantSurfProp* surface = GetSurfacePtr(plantTris->m_nSurfaceType);
+                if(surface && IsSphereVisibleForCamera(TheCamera, &plantTris->m_Center, plantTris->m_SphereRadius))
                 {
-                    plant.V1 = plantTris->m_V1;
-                    plant.V2 = plantTris->m_V2;
-                    plant.V3 = plantTris->m_V3;
-                    plant.center = plantTris->m_Center;
-                    plant.model_id = surfProp.m_nModelId;
-                    plant.num_plants = ((plantTris->m_nMaxNumPlants[0] + 8) & 0xFFF8);
-                    plant.scale.x = surfProp.m_fSizeScaleXY;
-                    plant.scale.y = surfProp.m_fSizeScaleZ;
-                    plant.texture_ptr = grassTex[surfProp.m_nUVOffset];
-                    plant.color = *(RwRGBA*)&surfProp.m_Color;
-                    plant.intensity = surfProp.m_Intensity;
-                    plant.intensity_var = surfProp.m_IntensityVariation;
-                    plant.seed = plantTris->m_Seed[0];
-                    plant.scale_var_xy = surfProp.m_fSizeScaleXYVariation;
-                    plant.scale_var_z = surfProp.m_fSizeScaleZVariation;
-                    plant.wind_bend_scale = surfProp.m_fWindBendingScale;
-                    plant.wind_bend_var = surfProp.m_fWindBendingVariation;
-                    
-                    plant.color.red *= intens;
-                    plant.color.green *= intens;
-                    plant.color.blue *= intens;
+                    for(int i = 0; i < MAX_SURFACE_DEFINDEXES; ++i)
+                    {
+                        CPlantSurfPropPlantData& surfProp = surface->m_aSurfaceProperties[i];
+                        if(surfProp.m_nModelId != 0xFFFF)
+                        {
+                            #ifdef EXTREME_OPTIMISATIONS
+                                memcpy(&plant.V1, &plantTris->m_V1, 4 * sizeof(CVector));
+                            #else
+                                plant.V1 = plantTris->m_V1;
+                                plant.V2 = plantTris->m_V2;
+                                plant.V3 = plantTris->m_V3;
+                                plant.center = plantTris->m_Center;
+                            #endif
+                            plant.model_id = surfProp.m_nModelId;
+                            plant.num_plants = ((plantTris->m_nMaxNumPlants[i] + 8) & 0xFFF8);
+                            #ifdef EXTREME_OPTIMISATIONS
+                                memcpy(&plant.scale.x, &surfProp.m_fSizeScaleXY, 2 * sizeof(float));
+                            #else
+                                plant.scale.x = surfProp.m_fSizeScaleXY;
+                                plant.scale.y = surfProp.m_fSizeScaleZ;
+                            #endif
+                            plant.texture_ptr = grassTex[surfProp.m_nUVOffset];
+                            #ifdef EXTREME_OPTIMISATIONS
+                                memcpy(&plant.color, &surfProp.m_Color, sizeof(CRGBA) + 2 * sizeof(uint8_t));
+                            #else
+                                plant.color = *(RwRGBA*)&surfProp.m_Color;
+                                plant.intensity = surfProp.m_Intensity;
+                                plant.intensity_var = surfProp.m_IntensityVariation;
+                            #endif
+                            plant.seed = plantTris->m_Seed[i];
+                            #ifdef EXTREME_OPTIMISATIONS
+                                memcpy(&plant.scale_var_xy, &surfProp.m_fSizeScaleXYVariation, 2 * sizeof(float));
+                                memcpy(&plant.wind_bend_scale, &surfProp.m_fWindBendingScale, 2 * sizeof(float));
+                            #else
+                                plant.scale_var_xy = surfProp.m_fSizeScaleXYVariation;
+                                plant.scale_var_z = surfProp.m_fSizeScaleZVariation;
+                                plant.wind_bend_scale = surfProp.m_fWindBendingScale;
+                                plant.wind_bend_var = surfProp.m_fWindBendingVariation;
+                            #endif
+                            
+                            plant.color.red   *= colBrightness;
+                            plant.color.green *= colBrightness;
+                            plant.color.blue  *= colBrightness;
 
-                    AddTriPlant(&plant, type);
+                            AddTriPlant(&plant, type);
+                        }
+                    }
                 }
             }
             plantTris = plantTris->m_pNextTri;
@@ -491,15 +525,51 @@ DECL_HOOKv(PlantMgrRender)
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)true);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTIONREF, (void*)false);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTION, (void*)rwALPHATESTFUNCTIONGREATEREQUAL);
+    // new
+    //RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
 }
 
 
 // ---------------------------------------------------------------------------------------
 
 
+#define DEFAULT_GRASS_DISTANCE 1
+void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
+{
+    switch(newVal)
+    {
+        default:
+            fGrassDistance = 25.0f;
+            break;
+        case 1:
+            fGrassDistance = 55.0f;
+            break;
+        case 2:
+            fGrassDistance = 85.0f;
+            break;
+        case 3:
+            fGrassDistance = 130.0f;
+            break;
+    }
+
+    SetCloseFarAlphaDist(3.0f, fGrassDistance);
+    cfgGrassDistance->SetInt(newVal);
+    cfg->Save();
+}
+
+#define DEFAULT_GRASS_QUALITY 1
 void OnGrassQualityChanged(int oldVal, int newVal, void* data)
 {
-    SetCloseFarAlphaDist(3.0f, 22.0f * powf(2.0, newVal));
+    switch(newVal)
+    {
+        default:
+            eGrassCulling = rwCULLMODECULLBACK;
+            break;
+        //case 1:
+        //    eGrassCulling = rwCULLMODECULLNONE;
+        //    break;
+    }
+
     cfgGrassQuality->SetInt(newVal);
     cfg->Save();
 }
@@ -508,7 +578,7 @@ void OnGrassQualityChanged(int oldVal, int newVal, void* data)
 // ---------------------------------------------------------------------------------------
 
 
-__attribute__ ((visibility ("default"))) extern "C" void OnModLoad()
+extern "C" void OnModLoad()
 {
     logger->SetTag("SA Planter");
     
@@ -578,10 +648,14 @@ __attribute__ ((visibility ("default"))) extern "C" void OnModLoad()
         aml->Write(pGTASA + 0x2CD342, "\xB1\xEE\xCF\xFA\x01\x99\xD1\xED\x00\x8A", 10);
         aml->PlaceB(pGTASA + 0x2CD34C + 0x1, pGTASA + 0x2CD35C + 0x1);
 
-        cfgGrassQuality = cfg->Bind("GrassQuality", 1);
-        cfgGrassQuality->Clamp(0, 2);
+        cfgGrassDistance = cfg->Bind("Grass_Distance", DEFAULT_GRASS_DISTANCE); cfgGrassDistance->Clamp(0, 3);
+        //cfgGrassQuality = cfg->Bind("Grass_Quality", DEFAULT_GRASS_QUALITY);    cfgGrassQuality->Clamp(0, 1);
 
-        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Quality", cfgGrassQuality->GetInt(), 0, 2, aGrassQualitySwitch, OnGrassQualityChanged, NULL);
-        if(cfgGrassQuality->GetInt() != 1) OnGrassQualityChanged(1, cfgGrassQuality->GetInt(), NULL);
+        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", cfgGrassDistance->GetInt(), 0, 3, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
+        if(cfgGrassDistance->GetInt() != DEFAULT_GRASS_DISTANCE) OnGrassDistanceChanged(1, cfgGrassDistance->GetInt(), NULL);
+
+        //sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Quality", cfgGrassQuality->GetInt(), 0, 1, aGrassQualitySwitch, OnGrassQualityChanged, NULL);
+        //if(cfgGrassQuality->GetInt() != DEFAULT_GRASS_QUALITY)   OnGrassQualityChanged(1, cfgGrassQuality->GetInt(), NULL);
     }
+    //aml->Redirect(pGTASA + 0x5B0B7A + 0x1, pGTASA + 0x5B0B92 + 0x1);
 }
