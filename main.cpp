@@ -1,6 +1,5 @@
 #include <mod/amlmod.h>
 #include <mod/logger.h>
-#include <mod/config.h>
 
 #ifdef AML32
     #include "GTASA_STRUCTS.h"
@@ -11,8 +10,11 @@
 #endif
 #include "isautils.h"
 
-MYMODCFG(net.rusjj.plantes, GTASA Planter, 1.2, RusJJ)
+MYMOD(net.rusjj.plantes, GTASA Planter, 1.3, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
+BEGIN_DEPLIST()
+    ADD_DEPENDENCY_VER(net.rusjj.aml, 1.2)
+END_DEPLIST()
 
 uintptr_t pGTASA;
 void* hGTASA;
@@ -61,8 +63,7 @@ const char* aGrassDistanceSwitch[4] =
     "FED_FXV",
 };
 RwTexture* tex_gras07Si;
-ConfigEntry* cfgGrassDistance;
-float fGrassMinDistance = 17.0f, fGrassDistance = 45.0f;
+float fGrassMinDistance = 17.0f, fGrassDistance = 45.0f, fGrassMid;
 RpAtomic* PC_PlantModelsTab0LOD[4];
 RpAtomic* PC_PlantModelsTab1LOD[4];
 bool g_bHasLODs = false;
@@ -316,6 +317,10 @@ inline RpMaterial* SetDefaultGrassMaterial(RpMaterial* material, void* rgba)
     RpMaterialSetTexture(material, tex_gras07Si);
     return material;
 }
+inline void RecalcGrassVars()
+{
+    fGrassMid = 1.0f / (1.25f * fGrassDistance - fGrassMinDistance);
+}
 inline bool LoadGrassModels(const char** grassModelsNames, RpAtomic** ret)
 {
     RpClump* clump = NULL;
@@ -394,6 +399,7 @@ void InitPlantManager()
         SetPlantModelsTab(3, PC_PlantModelsTab0);
         //SetCloseFarAlphaDist(3.0f, 60.0f);
         SetCloseFarAlphaDist(3.0f, fGrassDistance);
+        RecalcGrassVars();
     }
 }
 inline float lerp(float a, float b, float t)
@@ -414,12 +420,6 @@ RpMaterial* SetGrassModelProperties(RpMaterial* material, void* data)
     // RpMaterialSetTexture(material, plant->texture_ptr); // Deletes previous texture, SUS BEHAVIOUR
     // UPD: This is normal. But we need to keep our texture FOREVER. So not deleting it. EVER.
     return material;
-}
-
-float fGrassMid;
-inline void RecalcGrassVars()
-{
-    fGrassMid = 1.0f / (1.2f * fGrassDistance - fGrassMinDistance);
 }
 inline float GetGrassAlphaScale(float distance)
 {
@@ -552,30 +552,30 @@ DECL_HOOKv(PlantMgrRender)
 #define DEFAULT_GRASS_DISTANCE 1
 void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
 {
+    clampint(0, 3, &newVal);
     switch(newVal)
     {
         default:
-            fGrassMinDistance = 13.0f;
+            fGrassMinDistance = 19.0f;
             fGrassDistance = 25.0f;
             break;
         case 1:
-            fGrassMinDistance = 23.0f;
+            fGrassMinDistance = 33.0f;
             fGrassDistance = 52.0f;
             break;
         case 2:
-            fGrassMinDistance = 40.0f;
+            fGrassMinDistance = 50.0f;
             fGrassDistance = 80.0f;
             break;
         case 3:
-            fGrassMinDistance = 50.0f;
+            fGrassMinDistance = 70.0f;
             fGrassDistance = 120.0f;
             break;
     }
 
     SetCloseFarAlphaDist(3.0f, fGrassDistance);
     RecalcGrassVars();
-    cfgGrassDistance->SetInt(newVal);
-    cfg->Save();
+    aml->MLSSetInt("GRSQUAL", newVal);
 }
 
 
@@ -652,10 +652,9 @@ extern "C" void OnModLoad()
         aml->Write(pGTASA + 0x2CD342, "\xB1\xEE\xCF\xFA\x01\x99\xD1\xED\x00\x8A", 10);
         aml->PlaceB(pGTASA + 0x2CD34C + 0x1, pGTASA + 0x2CD35C + 0x1);
 
-        cfgGrassDistance = cfg->Bind("Grass_Distance", DEFAULT_GRASS_DISTANCE); cfgGrassDistance->Clamp(0, 3);
-
-        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", cfgGrassDistance->GetInt(), 0, 3, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
-        if(cfgGrassDistance->GetInt() != DEFAULT_GRASS_DISTANCE) OnGrassDistanceChanged(1, cfgGrassDistance->GetInt(), NULL);
+        int grassDist = DEFAULT_GRASS_DISTANCE;
+        aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 3, &grassDist);
+        if(grassDist != DEFAULT_GRASS_DISTANCE) OnGrassDistanceChanged(1, grassDist, NULL);
+        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 3, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
     }
-    //aml->Redirect(pGTASA + 0x5B0B7A + 0x1, pGTASA + 0x5B0B92 + 0x1);
 }
