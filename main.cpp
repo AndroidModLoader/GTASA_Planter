@@ -319,7 +319,7 @@ inline RpMaterial* SetDefaultGrassMaterial(RpMaterial* material, void* rgba)
 }
 inline void RecalcGrassVars()
 {
-    fGrassMid = 1.0f / (1.25f * fGrassDistance - fGrassMinDistance);
+    fGrassMid = 1.0f / (1.15f * fGrassDistance - fGrassMinDistance);
 }
 inline bool LoadGrassModels(const char** grassModelsNames, RpAtomic** ret)
 {
@@ -556,20 +556,20 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
     switch(newVal)
     {
         default:
-            fGrassMinDistance = 19.0f;
+            fGrassMinDistance = 14.0f;
             fGrassDistance = 25.0f;
             break;
         case 1:
-            fGrassMinDistance = 33.0f;
+            fGrassMinDistance = 25.0f;
             fGrassDistance = 52.0f;
             break;
         case 2:
-            fGrassMinDistance = 50.0f;
+            fGrassMinDistance = 31.0f;
             fGrassDistance = 80.0f;
             break;
         case 3:
-            fGrassMinDistance = 70.0f;
-            fGrassDistance = 120.0f;
+            fGrassMinDistance = 40.0f;
+            fGrassDistance = 110.0f;
             break;
     }
 
