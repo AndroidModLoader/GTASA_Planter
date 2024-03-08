@@ -413,3 +413,4 @@ isautils.h
 .vscode/settings.json
 GTAVC_STRUCTS.h
 GTA_SHARED.h
+*.blend
