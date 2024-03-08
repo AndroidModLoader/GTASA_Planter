@@ -633,7 +633,7 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
             fGrassDistance = 110.0f;
             break;
     }
-    fGrassMidDistance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
+    fGrassMidDistance = 0.75f * fGrassMinDistance;// + 0.5f * (fGrassDistance - fGrassMinDistance);
 
     SetCloseFarAlphaDist(3.0f, fGrassDistance);
     RecalcGrassVars();
