@@ -20,10 +20,10 @@ uintptr_t pGTASA;
 void* hGTASA;
 ISAUtils* sautils;
 
-#define MAXLOCTRIS 4
-#define GRASS_MODELS_TAB 4
+#define MAXLOCTRIS              4
+#define GRASS_MODELS_TAB        4
 #define DEFAULT_GRASS_DISTANCE  1
-#define DEFAULT_GRASS_LOD       1
+#define DEFAULT_GRASS_LOD       2
 
 
 // ---------------------------------------------------------------------------------------
@@ -64,8 +64,15 @@ const char* aGrassDistanceSwitch[4] =
     "FED_FXH",
     "FED_FXV",
 };
+const char* aGrassLODSwitch[4] = 
+{
+    "FED_FXL",
+    "LOD",
+    "LOD+",
+    "FED_FXH",
+};
 RwTexture* tex_gras07Si;
-float fGrassMinDistance = 25.0f, fGrassMidDistance = 57.0f, fGrassDistance = 52.0f, fGrassMid;
+float fGrassMinDistance, fGrassMidDistance, fGrassMid2Distance, fGrassDistance, fGrassMid;
 RpAtomic* PC_PlantModelsTab0LOD[4];
 RpAtomic* PC_PlantModelsTab1LOD[4];
 bool g_bHasLODs = false;
@@ -375,14 +382,25 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
             // Better to do that from Player Pos!
             if(DistanceBetweenPoints(playerPos /*TheCamera->GetPosition()*/, plant->center) < fGrassMidDistance)
             {
-                return PC_PlantModelsTab0LOD[plant->model_id];
+                return standartAtomics;
             }
             else
             {
-                return standartAtomics;
+                return PC_PlantModelsTab0LOD[plant->model_id];
             }
 
         case 2:
+            // Better to do that from Player Pos!
+            if(DistanceBetweenPoints(playerPos /*TheCamera->GetPosition()*/, plant->center) < fGrassMid2Distance)
+            {
+                return standartAtomics;
+            }
+            else
+            {
+                return PC_PlantModelsTab0LOD[plant->model_id];
+            }
+
+        case 3:
             return standartAtomics;
     }
 }
@@ -633,7 +651,8 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
             fGrassDistance = 110.0f;
             break;
     }
-    fGrassMidDistance = 0.75f * fGrassMinDistance;// + 0.5f * (fGrassDistance - fGrassMinDistance);
+    fGrassMidDistance =  0.75f * fGrassMinDistance;
+    fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
 
     SetCloseFarAlphaDist(3.0f, fGrassDistance);
     RecalcGrassVars();
@@ -641,7 +660,7 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
 }
 void OnGrassLODChanged(int oldVal, int newVal, void* data)
 {
-    clampint(0, 2, &newVal);
+    clampint(0, 3, &newVal);
     grassLODify = newVal;
     aml->MLSSetInt("GRSLOD", newVal);
 }
@@ -728,7 +747,7 @@ extern "C" void OnModLoad()
         sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 3, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
 
         grassLODify = DEFAULT_GRASS_LOD;
-        aml->MLSGetInt("GRSLOD", &grassLODify); clampint(0, 2, &grassLODify);
-        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Quality", grassLODify, 0, 2, aGrassDistanceSwitch, OnGrassLODChanged, NULL);
+        aml->MLSGetInt("GRSLOD", &grassLODify); clampint(0, 3, &grassLODify);
+        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Quality", grassLODify, 0, 3, aGrassLODSwitch, OnGrassLODChanged, NULL);
     }
 }
