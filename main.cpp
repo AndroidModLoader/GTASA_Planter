@@ -72,7 +72,7 @@ const char* aGrassLODSwitch[4] =
     "FED_FXH",
 };
 RwTexture* tex_gras07Si;
-float fGrassMinDistance, fGrassMidDistance, fGrassMid2Distance, fGrassDistance, fGrassMid;
+float fGrassMinDistance, fGrassMidDistance, fGrassMid2Distance, fGrassDistance, fGrassFadeDist;
 RpAtomic* PC_PlantModelsTab0LOD[4];
 RpAtomic* PC_PlantModelsTab1LOD[4];
 bool g_bHasLODs = false;
@@ -157,7 +157,7 @@ inline CPlantSurfProp* AllocSurfacePtr(unsigned short index)
 }
 inline void PlantSurfPropMgrLoadPlantsDat(const char* filename)
 {
-    logger->Info("Parsing plants.dat...");
+    logger->Info("Parsing %s...", filename);
     FileMgrSetDir("DATA");
     FILE* f = FileMgrOpenFile(filename, "r");
     FileMgrSetDir("");
@@ -269,6 +269,7 @@ inline void PlantSurfPropMgrLoadPlantsDat(const char* filename)
             token = strtok(NULL, " \t");
         }
     }
+
   CloseFile:
     FileMgrCloseFile(f);
 }
@@ -331,7 +332,9 @@ inline RpMaterial* SetDefaultGrassMaterial(RpMaterial* material, void* rgba)
 }
 inline void RecalcGrassVars()
 {
-    fGrassMid = 1.0f / (fGrassDistance - fGrassMinDistance);
+    fGrassFadeDist = 0.92f / (fGrassDistance - fGrassMinDistance);
+    fGrassMidDistance =  0.75f * fGrassMinDistance;
+    fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
 }
 inline bool LoadGrassModels(const char** grassModelsNames, RpAtomic** ret)
 {
@@ -380,7 +383,7 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
 
         case 1:
             // Better to do that from Player Pos!
-            if(DistanceBetweenPoints(playerPos /*TheCamera->GetPosition()*/, plant->center) < fGrassMidDistance)
+            if(DistanceBetweenPoints(playerPos, plant->center) < fGrassMidDistance)
             {
                 return standartAtomics;
             }
@@ -391,7 +394,7 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
 
         case 2:
             // Better to do that from Player Pos!
-            if(DistanceBetweenPoints(playerPos /*TheCamera->GetPosition()*/, plant->center) < fGrassMid2Distance)
+            if(DistanceBetweenPoints(playerPos, plant->center) < fGrassMid2Distance)
             {
                 return standartAtomics;
             }
@@ -404,6 +407,7 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
             return standartAtomics;
     }
 }
+#ifdef AML32
 __attribute__((optnone)) __attribute__((naked)) void DrawTriPlants_Patch(void)
 {
     asm volatile(
@@ -421,6 +425,26 @@ __attribute__((optnone)) __attribute__((naked)) void DrawTriPlants_Patch(void)
         "BX              R12\n"
     :: "r" (DrawTriPlants_BackTo));
 }
+#else
+__attribute__((optnone)) __attribute__((naked)) void DrawTriPlants_Patch(void)
+{
+    asm volatile(
+        "MADD            X19, X21, X26, X20\n"
+        "LDRH            W8, [X19, #0x30]\n"
+        "LDR             X23, [X9, X8, LSL#3]\n"
+
+        "MOV X0,         X23\n"
+        "MOV X1,         X19\n"
+        "BL              DrawTriPlants_Inject\n"
+        "MOV X23,        X0\n"
+    );
+    asm volatile(
+        "MOV             X16, %0\n"
+        "LDR             S0, [X19, #0x50]\n"
+        "BR              X16\n"
+    :: "r" (DrawTriPlants_BackTo));
+}
+#endif
 void InitPlantManager()
 {
     PC_PlantTextureTab0[0] = GetTextureFromTextureDB("txgrass0_0"); //PC_PlantTextureTab0[0]->refCount++;
@@ -475,8 +499,13 @@ void InitPlantManager()
             logger->Info("Found grass LODs, additional patch is on the way!");
 
             // Enable LODs!
-            DrawTriPlants_BackTo = pGTASA + 0x2CD37E + 0x1;
-            aml->Redirect(pGTASA + 0x2CD370 + 0x1, (uintptr_t)DrawTriPlants_Patch);
+            #ifdef AML32
+                DrawTriPlants_BackTo = pGTASA + 0x2CD37E + 0x1;
+                aml->Redirect(pGTASA + 0x2CD370 + 0x1, (uintptr_t)DrawTriPlants_Patch);
+            #else
+                DrawTriPlants_BackTo = pGTASA + 0x38F024;
+                aml->Redirect(pGTASA + 0x38F014, (uintptr_t)DrawTriPlants_Patch);
+            #endif
         }
     }
 }
@@ -504,7 +533,7 @@ inline float GetGrassAlphaScale(float distance)
 {
     if(distance < fGrassMinDistance) return 1.0f;
     
-    float scale = 1.0f - fGrassMid * (distance - fGrassMinDistance);
+    float scale = 1.0f - fGrassFadeDist * (distance - fGrassMinDistance);
     if(scale < 0) return 0;
     return scale;
 }
@@ -524,6 +553,7 @@ extern "C" void GrassMaterialApplying(RpGeometry* geometry, PPTriPlant* plant)
 
     RpGeometryForAllMaterials(geometry, SetGrassModelProperties, plant);
 }
+#ifdef AML32
 __attribute__((optnone)) __attribute__((naked)) void GrassMaterialApplying_Patch(void)
 {
     asm volatile(
@@ -537,6 +567,20 @@ __attribute__((optnone)) __attribute__((naked)) void GrassMaterialApplying_Patch
         "BX R12\n"
     :: "r" (GrassMaterialApplying_BackTo));
 }
+#else
+__attribute__((optnone)) __attribute__((naked)) void GrassMaterialApplying_Patch(void)
+{
+    asm volatile(
+        "LDR X0, [X23, #0x30]\n"
+        "MOV X1, X19\n"
+        "BL GrassMaterialApplying\n");
+    asm volatile(
+        "MOV X16, %0\n"
+        "MOV W25, #0x68\n"
+        "BR X16\n"
+    :: "r" (GrassMaterialApplying_BackTo));
+}
+#endif
 DECL_HOOKv(PlantSurfPropMgrInit)
 {
     PlantSurfPropMgrInit();
@@ -550,7 +594,14 @@ DECL_HOOKv(PlantMgrInit)
 DECL_HOOKv(PlantMgrRender)
 {
     static PPTriPlant plant;
-    playerPos = FindPlayerPed(-1)->GetPosition();
+    if(TheCamera->m_bCamDirectlyBehind)
+    {
+        playerPos = FindPlayerPed(-1)->GetPosition();
+    }
+    else
+    {
+        playerPos = TheCamera->GetPosition();
+    }
     
     RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)false);
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)true);
@@ -580,10 +631,10 @@ DECL_HOOKv(PlantMgrRender)
                     for(int i = 0; i < MAX_SURFACE_DEFINDEXES; ++i)
                     {
                         CPlantSurfPropPlantData& surfProp = surface->m_aSurfaceProperties[i];
-                        if(surfProp.m_nModelId != 0xFFFF /*&& surfProp.m_fDensity > 0.0f*/)
+                        if(surfProp.m_nModelId != 0xFFFF)
                         {
                             plant.color = *(RwRGBA*)&surfProp.m_Color;
-                            plant.color.alpha = (uint8_t)((float)(plant.color.alpha) * GetGrassAlphaScale((camPos - plantTris->m_Center).Magnitude()));
+                            plant.color.alpha = (uint8_t)(GetGrassAlphaScale((camPos - plantTris->m_Center).Magnitude()) * plant.color.alpha);
 
                             if(plant.color.alpha != 0)
                             {
@@ -651,8 +702,6 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
             fGrassDistance = 110.0f;
             break;
     }
-    fGrassMidDistance =  0.75f * fGrassMinDistance;
-    fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
 
     SetCloseFarAlphaDist(3.0f, fGrassDistance);
     RecalcGrassVars();
@@ -682,11 +731,19 @@ extern "C" void OnModLoad()
         return;
     }
 
-    GrassMaterialApplying_BackTo =          pGTASA + 0x2CD434 + 0x1;
-    aml->Redirect(pGTASA + 0x2CD42A + 0x1,  (uintptr_t)GrassMaterialApplying_Patch);
-    HOOKPLT(PlantSurfPropMgrInit,           pGTASA + 0x6721C8);
-    HOOKPLT(PlantMgrInit,                   pGTASA + 0x673C90);
-    HOOKPLT(PlantMgrRender,                 pGTASA + 0x6726D0);
+    #ifdef AML32
+        GrassMaterialApplying_BackTo =          pGTASA + 0x2CD434 + 0x1;
+        aml->Redirect(pGTASA + 0x2CD42A + 0x1,  (uintptr_t)GrassMaterialApplying_Patch);
+        HOOKPLT(PlantSurfPropMgrInit,           pGTASA + 0x6721C8);
+        HOOKPLT(PlantMgrInit,                   pGTASA + 0x673C90);
+        HOOKPLT(PlantMgrRender,                 pGTASA + 0x6726D0);
+    #else
+        GrassMaterialApplying_BackTo =          pGTASA + 0x38F0D4;
+        aml->Redirect(pGTASA + 0x38F0C0,        (uintptr_t)GrassMaterialApplying_Patch);
+        HOOKBL(PlantSurfPropMgrInit,            pGTASA + 0x390DE0);
+        HOOKPLT(PlantMgrInit,                   pGTASA + 0x846680);
+        HOOKPLT(PlantMgrRender,                 pGTASA + 0x844308);
+    #endif
 
     SET_TO(TheCamera,                       aml->GetSym(hGTASA, "TheCamera"));
     SET_TO(m_SurfPropPtrTab,                aml->GetSym(hGTASA, "_ZN17CPlantSurfPropMgr16m_SurfPropPtrTabE"));
@@ -706,8 +763,8 @@ extern "C" void OnModLoad()
     SET_TO(RwRenderStateSet,                aml->GetSym(hGTASA, "_Z16RwRenderStateSet13RwRenderStatePv"));
     SET_TO(FileMgrSetDir,                   aml->GetSym(hGTASA, "_ZN8CFileMgr6SetDirEPKc"));
     SET_TO(FileMgrOpenFile,                 aml->GetSym(hGTASA, "_ZN8CFileMgr8OpenFileEPKcS1_"));
-    SET_TO(FileMgrCloseFile,                aml->GetSym(hGTASA, "_ZN8CFileMgr9CloseFileEj"));
-    SET_TO(FileLoaderLoadLine,              aml->GetSym(hGTASA, "_ZN11CFileLoader8LoadLineEj"));
+    SET_TO(FileMgrCloseFile,                aml->GetSym(hGTASA, BYVER("_ZN8CFileMgr9CloseFileEj", "_ZN8CFileMgr9CloseFileEy")));
+    SET_TO(FileLoaderLoadLine,              aml->GetSym(hGTASA, BYVER("_ZN11CFileLoader8LoadLineEj", "_ZN11CFileLoader8LoadLineEy")));
     SET_TO(GetSurfaceIdFromName,            aml->GetSym(hGTASA, "_ZN14SurfaceInfos_c20GetSurfaceIdFromNameEPc"));
     SET_TO(GetTextureFromTextureDB,         aml->GetSym(hGTASA, "_ZN22TextureDatabaseRuntime10GetTextureEPKc"));
     SET_TO(SetPlantModelsTab,               aml->GetSym(hGTASA, "_ZN14CGrassRenderer17SetPlantModelsTabEjPP8RpAtomic"));
@@ -738,8 +795,12 @@ extern "C" void OnModLoad()
     sautils = (ISAUtils*)GetInterface("SAUtils");
     if(sautils)
     {
-        aml->Write(pGTASA + 0x2CD342, "\xB1\xEE\xCF\xFA\x01\x99\xD1\xED\x00\x8A", 10);
-        aml->PlaceB(pGTASA + 0x2CD34C + 0x1, pGTASA + 0x2CD35C + 0x1);
+        #ifdef AML32
+            aml->Write(pGTASA + 0x2CD342, "\xB1\xEE\xCF\xFA\x01\x99\xD1\xED\x00\x8A", 10);
+            aml->PlaceB(pGTASA + 0x2CD34C + 0x1, pGTASA + 0x2CD35C + 0x1);
+        #else
+            aml->Write32(pGTASA + 0x38EFE0, 0x1E2E1001);
+        #endif
 
         int grassDist = DEFAULT_GRASS_DISTANCE;
         aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 3, &grassDist);
