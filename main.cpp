@@ -75,7 +75,7 @@ RwTexture* tex_gras07Si;
 float fGrassMinDistance, fGrassMidDistance, fGrassMid2Distance, fGrassDistance, fGrassFadeDist;
 RpAtomic* PC_PlantModelsTab0LOD[4];
 RpAtomic* PC_PlantModelsTab1LOD[4];
-bool g_bHasLODs = false;
+bool g_bHasLODs = false, g_bHasRegular = false;
 int grassLODify = DEFAULT_GRASS_LOD;
 
 
@@ -137,6 +137,50 @@ CPlayerPed*         (*FindPlayerPed)(int playerId);
 // ---------------------------------------------------------------------------------------
 
 
+inline void RecalcGrassVars()
+{
+    fGrassFadeDist = 0.92f / (fGrassDistance - fGrassMinDistance);
+    fGrassMidDistance =  0.75f * fGrassMinDistance;
+    fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
+}
+void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
+{
+    clampint(0, 3, &newVal);
+    switch(newVal)
+    {
+        default:
+            fGrassMinDistance = 14.0f;
+            fGrassDistance = 25.0f;
+            break;
+        case 1:
+            fGrassMinDistance = 25.0f;
+            fGrassDistance = 52.0f;
+            break;
+        case 2:
+            fGrassMinDistance = 31.0f;
+            fGrassDistance = 80.0f;
+            break;
+        case 3:
+            fGrassMinDistance = 40.0f;
+            fGrassDistance = 110.0f;
+            break;
+    }
+
+    SetCloseFarAlphaDist(3.0f, fGrassDistance);
+    RecalcGrassVars();
+    aml->MLSSetInt("GRSQUAL", newVal);
+}
+void OnGrassLODChanged(int oldVal, int newVal, void* data)
+{
+    clampint(0, 3, &newVal);
+    grassLODify = newVal;
+    aml->MLSSetInt("GRSLOD", newVal);
+}
+
+
+// ---------------------------------------------------------------------------------------
+
+
 inline CPlantSurfProp* GetSurfacePtr(unsigned short index)
 {
     if( index >= MAX_SURFACES )
@@ -169,6 +213,7 @@ inline void PlantSurfPropMgrLoadPlantsDat(const char* filename)
 
     while((i = FileLoaderLoadLine(f)) != NULL)
     {
+      NextLineBuddy:
         ++line;
         if(!strcmp(i, ";the end")) break;
         if(*i == ';') continue; // if ';'
@@ -191,7 +236,7 @@ inline void PlantSurfPropMgrLoadPlantsDat(const char* filename)
                     else
                     {
                         logger->Error("Unknown surface name '%s' in 'plants.dat' (line %d)! See Andrzej to fix this.", token, line);
-                        continue; // Just let it pass all surfaces (why do we need to stop it actually?)
+                        goto NextLineBuddy; // Just let it pass all surfaces (why do we need to stop it actually?)
                     }
                     goto CloseFile;
 
@@ -329,12 +374,6 @@ inline RpMaterial* SetDefaultGrassMaterial(RpMaterial* material, void* rgba)
     material->color = *(RwRGBA*)rgba;
     RpMaterialSetTexture(material, tex_gras07Si);
     return material;
-}
-inline void RecalcGrassVars()
-{
-    fGrassFadeDist = 0.92f / (fGrassDistance - fGrassMinDistance);
-    fGrassMidDistance =  0.75f * fGrassMinDistance;
-    fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
 }
 inline bool LoadGrassModels(const char** grassModelsNames, RpAtomic** ret)
 {
@@ -474,7 +513,8 @@ void InitPlantManager()
     PC_PlantSlotTextureTab[3] = PC_PlantTextureTab1;
 
     g_bHasLODs = LoadGrassModels(grassMdls1LOD, PC_PlantModelsTab0LOD) && LoadGrassModels(grassMdls2LOD, PC_PlantModelsTab1LOD);
-    if(LoadGrassModels(grassMdls1, PC_PlantModelsTab0) && LoadGrassModels(grassMdls2, PC_PlantModelsTab1))
+    g_bHasRegular = LoadGrassModels(grassMdls1, PC_PlantModelsTab0) && LoadGrassModels(grassMdls2, PC_PlantModelsTab1);
+    if(g_bHasRegular)
     {
         PC_PlantModelSlotTab[0] = PC_PlantModelsTab0;
         PC_PlantModelSlotTab[1] = PC_PlantModelsTab1;
@@ -485,18 +525,34 @@ void InitPlantManager()
         SetPlantModelsTab(1, PC_PlantModelsTab0);
         SetPlantModelsTab(2, PC_PlantModelsTab0);
         SetPlantModelsTab(3, PC_PlantModelsTab0);
-        SetCloseFarAlphaDist(3.0f, /* 60.0f */ fGrassDistance);
-        RecalcGrassVars();
     }
+    else if(g_bHasLODs)
+    {
+        PC_PlantModelSlotTab[0] = PC_PlantModelsTab0LOD;
+        PC_PlantModelSlotTab[1] = PC_PlantModelsTab1LOD;
+        PC_PlantModelSlotTab[2] = PC_PlantModelsTab0LOD;
+        PC_PlantModelSlotTab[3] = PC_PlantModelsTab1LOD;
 
-    if(g_bHasLODs)
+        SetPlantModelsTab(0, PC_PlantModelsTab0LOD);
+        SetPlantModelsTab(1, PC_PlantModelsTab0LOD);
+        SetPlantModelsTab(2, PC_PlantModelsTab0LOD);
+        SetPlantModelsTab(3, PC_PlantModelsTab0LOD);
+    }
+    else
+    {
+        return;
+    }
+    SetCloseFarAlphaDist(3.0f, /* 60.0f */ fGrassDistance);
+    RecalcGrassVars();
+
+    if(g_bHasRegular && g_bHasLODs)
     {
         static bool bDidPatch = false;
         if(!bDidPatch)
         {
             bDidPatch = true;
 
-            logger->Info("Found grass LODs, additional patch is on the way!");
+            logger->Info("Found grass LODs as an addon, additional patch is on the way!");
 
             // Enable LODs!
             #ifdef AML32
@@ -674,44 +730,6 @@ DECL_HOOKv(PlantMgrRender)
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)true);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTIONREF, (void*)false);
     RwRenderStateSet(rwRENDERSTATEALPHATESTFUNCTION, (void*)rwALPHATESTFUNCTIONGREATEREQUAL);
-}
-
-
-// ---------------------------------------------------------------------------------------
-
-
-void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
-{
-    clampint(0, 3, &newVal);
-    switch(newVal)
-    {
-        default:
-            fGrassMinDistance = 14.0f;
-            fGrassDistance = 25.0f;
-            break;
-        case 1:
-            fGrassMinDistance = 25.0f;
-            fGrassDistance = 52.0f;
-            break;
-        case 2:
-            fGrassMinDistance = 31.0f;
-            fGrassDistance = 80.0f;
-            break;
-        case 3:
-            fGrassMinDistance = 40.0f;
-            fGrassDistance = 110.0f;
-            break;
-    }
-
-    SetCloseFarAlphaDist(3.0f, fGrassDistance);
-    RecalcGrassVars();
-    aml->MLSSetInt("GRSQUAL", newVal);
-}
-void OnGrassLODChanged(int oldVal, int newVal, void* data)
-{
-    clampint(0, 3, &newVal);
-    grassLODify = newVal;
-    aml->MLSSetInt("GRSLOD", newVal);
 }
 
 
