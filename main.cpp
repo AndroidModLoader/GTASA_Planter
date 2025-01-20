@@ -144,8 +144,14 @@ inline void RecalcGrassVars()
     fGrassMidDistance =  0.75f * fGrassMinDistance;
     fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
 }
+inline void PatchGrassDistance(bool revert)
+{
+    
+}
 void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
 {
+	if(newVal < 4) PatchGrassDistance(true);
+	
     clampint(0, 4, &newVal);
     switch(newVal)
     {
@@ -166,8 +172,9 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
             fGrassDistance = 110.0f;
             break;
         case 4:
-            fGrassMinDistance = 230.0f;
-            fGrassDistance = 300.0f;
+            PatchGrassDistance(false);
+            fGrassMinDistance = 320.0f;
+            fGrassDistance = 400.0f;
             break;
     }
 
@@ -760,6 +767,12 @@ extern "C" void OnModLoad()
         HOOKPLT(PlantSurfPropMgrInit,           pGTASA + 0x6721C8);
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x673C90);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x6726D0);
+        
+        aml->Write8(pGTASA + 0x2CE51E + 0x3,    0x31); // 100 -> 400
+        
+        aml->WriteFloat(pGTASA + 0x2CEAF0,      400.0f * 400.0f); // 100^2 -> 400^2
+        
+        aml->WriteFloat(pGTASA + 0x2CE790,      400.0f * 400.0f); // 100^2 -> 400^2
     #else
         GrassMaterialApplying_BackTo =          pGTASA + 0x38F0D4;
         aml->Redirect(pGTASA + 0x38F0C0,        (uintptr_t)GrassMaterialApplying_Patch);
