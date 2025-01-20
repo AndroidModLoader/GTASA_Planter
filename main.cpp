@@ -10,7 +10,7 @@
 #endif
 #include "isautils.h"
 
-MYMOD(net.rusjj.plantes, GTASA Planter, 1.4, RusJJ)
+MYMOD(net.rusjj.plantes, GTASA Planter, 1.5, RusJJ)
 NEEDGAME(com.rockstargames.gtasa)
 BEGIN_DEPLIST()
     ADD_DEPENDENCY_VER(net.rusjj.aml, 1.2.1)
@@ -57,12 +57,13 @@ const char* grassMdls2LOD[GRASS_MODELS_TAB] =
     "models\\grass\\LOD\\grass1_3_LOD.dff",
     "models\\grass\\LOD\\grass1_4_LOD.dff",
 };
-const char* aGrassDistanceSwitch[4] = 
+const char* aGrassDistanceSwitch[5] = 
 {
     "FED_FXL",
     "FED_FXM",
     "FED_FXH",
     "FED_FXV",
+    "ULTRA",
 };
 const char* aGrassLODSwitch[4] = 
 {
@@ -145,7 +146,7 @@ inline void RecalcGrassVars()
 }
 void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
 {
-    clampint(0, 3, &newVal);
+    clampint(0, 4, &newVal);
     switch(newVal)
     {
         default:
@@ -163,6 +164,10 @@ void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
         case 3:
             fGrassMinDistance = 40.0f;
             fGrassDistance = 110.0f;
+            break;
+        case 4:
+            fGrassMinDistance = 230.0f;
+            fGrassDistance = 300.0f;
             break;
     }
 
@@ -761,6 +766,17 @@ extern "C" void OnModLoad()
         HOOKBL(PlantSurfPropMgrInit,            pGTASA + 0x390DE0);
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x846680);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x844308);
+        
+        aml->Write32(pGTASA + 0x390190,         0xD0001D4B); // 100 -> 400
+        aml->Write32(pGTASA + 0x390194,         0xBD4C1568);
+        
+        aml->Write32(pGTASA + 0x390528,         0xF0FFFFEC); // 100^2 -> 400^2
+        aml->Write32(pGTASA + 0x390538,         0xBD40D189);
+        
+        aml->Write32(pGTASA + 0x3902E4,         0xF0FFFFE8); // 100^2 -> 400^2
+        aml->Write32(pGTASA + 0x3902EC,         0xBD40D108);
+        
+        aml->WriteFloat(pGTASA + 0x38F0D0,      400.0f * 400.0f); // for patches above
     #endif
 
     SET_TO(TheCamera,                       aml->GetSym(hGTASA, "TheCamera"));
@@ -821,9 +837,9 @@ extern "C" void OnModLoad()
         #endif
 
         int grassDist = DEFAULT_GRASS_DISTANCE;
-        aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 3, &grassDist);
+        aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 4, &grassDist);
         /*if(grassDist != DEFAULT_GRASS_DISTANCE)*/ OnGrassDistanceChanged(1, grassDist, NULL);
-        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 3, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
+        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 4, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
 
         grassLODify = DEFAULT_GRASS_LOD;
         aml->MLSGetInt("GRSLOD", &grassLODify); clampint(0, 3, &grassLODify);
