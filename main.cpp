@@ -57,13 +57,14 @@ const char* grassMdls2LOD[GRASS_MODELS_TAB] =
     "models\\grass\\LOD\\grass1_3_LOD.dff",
     "models\\grass\\LOD\\grass1_4_LOD.dff",
 };
-const char* aGrassDistanceSwitch[5] = 
+const char* aGrassDistanceSwitch[6] = 
 {
     "FED_FXL",
     "FED_FXM",
     "FED_FXH",
     "FED_FXV",
     "ULTRA",
+    "FPS KILLER",
 };
 const char* aGrassLODSwitch[4] = 
 {
@@ -96,7 +97,10 @@ RpAtomic*           PC_PlantModelsTab1[4];
 CPlantLocTri**      m_CloseLocTriListHead;
 CPlantLocTri**      m_UnusedLocTriListHead;
 float*              m_fDNBalanceParam;
-int*                PPTriPlantBuffer; // CPPTriPlantBuffer*
+
+#define             LOCTRIS_LIMIT    512 // default is 256
+
+CPlantLocTri        m_LocTrisTab_NEW[LOCTRIS_LIMIT];
 
 
 // ---------------------------------------------------------------------------------------
@@ -146,34 +150,78 @@ inline void RecalcGrassVars()
 }
 inline void PatchGrassDistance(bool revert)
 {
-    
+#ifdef AML32
+    if(revert)
+    {
+        aml->Write8(pGTASA + 0x2CE4AE + 0x3, 0x21);
+        aml->WriteFloat(pGTASA + 0x2CEA80, 100.0f * 100.0f);
+        aml->WriteFloat(pGTASA + 0x2CE720, 100.0f * 100.0f);
+    }
+    else
+    {
+        aml->Write8(pGTASA + 0x2CE4AE + 0x3, 0x31); // 100 -> 400
+        aml->WriteFloat(pGTASA + 0x2CEA80, 400.0f * 400.0f); // 100^2 -> 400^2
+        aml->WriteFloat(pGTASA + 0x2CE720, 400.0f * 400.0f); // 100^2 -> 400^2
+    }
+#else
+    if(revert)
+    {
+        aml->Write32(pGTASA + 0x390190, 0x90001D4B);
+        aml->Write32(pGTASA + 0x390194, 0xBD4F6D68);
+        aml->Write32(pGTASA + 0x390528, 0xD0001D6C);
+        aml->Write32(pGTASA + 0x390538, 0xBD479989);
+        aml->Write32(pGTASA + 0x3902E4, 0xD0001D68);
+        aml->Write32(pGTASA + 0x3902EC, 0xBD479908);
+    }
+    else
+    {
+        aml->Write32(pGTASA + 0x390190, 0xD0001D4B); // 100 -> 400
+        aml->Write32(pGTASA + 0x390194, 0xBD4C1568);
+        aml->Write32(pGTASA + 0x390528, 0xF0FFFFEC); // 100^2 -> 400^2
+        aml->Write32(pGTASA + 0x390538, 0xBD40D189);
+        aml->Write32(pGTASA + 0x3902E4, 0xF0FFFFE8); // 100^2 -> 400^2
+        aml->Write32(pGTASA + 0x3902EC, 0xBD40D108);
+    }
+#endif
 }
 void OnGrassDistanceChanged(int oldVal, int newVal, void* data)
 {
-	if(newVal < 4) PatchGrassDistance(true);
-	
-    clampint(0, 4, &newVal);
+    clampint(0, 5, &newVal);
     switch(newVal)
     {
         default:
-            fGrassMinDistance = 14.0f;
+            PatchGrassDistance(true);
+            fGrassMinDistance = 16.0f;
             fGrassDistance = 25.0f;
             break;
+            
         case 1:
-            fGrassMinDistance = 25.0f;
+            PatchGrassDistance(true);
+            fGrassMinDistance = 21.0f;
             fGrassDistance = 52.0f;
             break;
+
         case 2:
-            fGrassMinDistance = 31.0f;
+            PatchGrassDistance(true);
+            fGrassMinDistance = 45.0f;
             fGrassDistance = 80.0f;
             break;
+
         case 3:
-            fGrassMinDistance = 40.0f;
+            PatchGrassDistance(true);
+            fGrassMinDistance = 63.0f;
             fGrassDistance = 110.0f;
             break;
+
         case 4:
             PatchGrassDistance(false);
-            fGrassMinDistance = 320.0f;
+            fGrassMinDistance = 120.0f;
+            fGrassDistance = 170.0f;
+            break;
+
+        case 5:
+            PatchGrassDistance(false);
+            fGrassMinDistance = 350.0f;
             fGrassDistance = 400.0f;
             break;
     }
@@ -658,10 +706,19 @@ DECL_HOOKv(PlantMgrInit)
 {
     PlantMgrInit(); // Acts like a CPlantMgr::ReloadConfig()
     InitPlantManager();
+
+    memset(&m_LocTrisTab_NEW, 0, sizeof(m_LocTrisTab_NEW));
+    *m_UnusedLocTriListHead = &m_LocTrisTab_NEW[0];
+    m_LocTrisTab_NEW[0].m_pPrevTri = NULL;
+    for(int i = 0; i < LOCTRIS_LIMIT-1; ++i)
+    {
+        m_LocTrisTab_NEW[i].m_pNextTri = &m_LocTrisTab_NEW[i + 1];
+    }
+    m_LocTrisTab_NEW[LOCTRIS_LIMIT-1].m_pNextTri = NULL;
 }
+static PPTriPlant plant;
 DECL_HOOKv(PlantMgrRender)
 {
-    static PPTriPlant plant;
     if(TheCamera->m_bCamDirectlyBehind)
     {
         playerPos = FindPlayerPed(-1)->GetPosition();
@@ -767,12 +824,6 @@ extern "C" void OnModLoad()
         HOOKPLT(PlantSurfPropMgrInit,           pGTASA + 0x6721C8);
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x673C90);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x6726D0);
-        
-        aml->Write8(pGTASA + 0x2CE51E + 0x3,    0x31); // 100 -> 400
-        
-        aml->WriteFloat(pGTASA + 0x2CEAF0,      400.0f * 400.0f); // 100^2 -> 400^2
-        
-        aml->WriteFloat(pGTASA + 0x2CE790,      400.0f * 400.0f); // 100^2 -> 400^2
     #else
         GrassMaterialApplying_BackTo =          pGTASA + 0x38F0D4;
         aml->Redirect(pGTASA + 0x38F0C0,        (uintptr_t)GrassMaterialApplying_Patch);
@@ -780,16 +831,7 @@ extern "C" void OnModLoad()
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x846680);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x844308);
         
-        aml->Write32(pGTASA + 0x390190,         0xD0001D4B); // 100 -> 400
-        aml->Write32(pGTASA + 0x390194,         0xBD4C1568);
-        
-        aml->Write32(pGTASA + 0x390528,         0xF0FFFFEC); // 100^2 -> 400^2
-        aml->Write32(pGTASA + 0x390538,         0xBD40D189);
-        
-        aml->Write32(pGTASA + 0x3902E4,         0xF0FFFFE8); // 100^2 -> 400^2
-        aml->Write32(pGTASA + 0x3902EC,         0xBD40D108);
-        
-        aml->WriteFloat(pGTASA + 0x38F0D0,      400.0f * 400.0f); // for patches above
+        aml->WriteFloat(pGTASA + 0x38F0D0,      400.0f * 400.0f); // for patches in fn PatchGrassDistance
     #endif
 
     SET_TO(TheCamera,                       aml->GetSym(hGTASA, "TheCamera"));
@@ -805,7 +847,6 @@ extern "C" void OnModLoad()
     SET_TO(m_CloseLocTriListHead,           aml->GetSym(hGTASA, "_ZN9CPlantMgr21m_CloseLocTriListHeadE"));
     SET_TO(m_UnusedLocTriListHead,          aml->GetSym(hGTASA, "_ZN9CPlantMgr22m_UnusedLocTriListHeadE"));
     SET_TO(m_fDNBalanceParam,               aml->GetSym(hGTASA, "_ZN25CCustomBuildingDNPipeline17m_fDNBalanceParamE"));
-    SET_TO(PPTriPlantBuffer,                aml->GetSym(hGTASA, "_ZL16PPTriPlantBuffer"));
 
     SET_TO(RwRenderStateSet,                aml->GetSym(hGTASA, "_Z16RwRenderStateSet13RwRenderStatePv"));
     SET_TO(FileMgrSetDir,                   aml->GetSym(hGTASA, "_ZN8CFileMgr6SetDirEPKc"));
@@ -850,9 +891,9 @@ extern "C" void OnModLoad()
         #endif
 
         int grassDist = DEFAULT_GRASS_DISTANCE;
-        aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 4, &grassDist);
+        aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 5, &grassDist);
         /*if(grassDist != DEFAULT_GRASS_DISTANCE)*/ OnGrassDistanceChanged(1, grassDist, NULL);
-        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 4, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
+        sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 5, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
 
         grassLODify = DEFAULT_GRASS_LOD;
         aml->MLSGetInt("GRSLOD", &grassLODify); clampint(0, 3, &grassLODify);
