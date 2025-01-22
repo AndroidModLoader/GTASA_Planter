@@ -75,6 +75,7 @@ const char* aGrassLODSwitch[4] =
 };
 RwTexture* tex_gras07Si;
 float fGrassMinDistance, fGrassMidDistance, fGrassMid2Distance, fGrassDistance, fGrassFadeDist;
+float fGrassMinDistanceSqr, fGrassMidDistanceSqr, fGrassMid2DistanceSqr, fGrassDistanceSqr, fGrassFadeDistSqr;
 RpAtomic* PC_PlantModelsTab0LOD[4];
 RpAtomic* PC_PlantModelsTab1LOD[4];
 bool g_bHasLODs = false, g_bHasRegular = false;
@@ -144,9 +145,15 @@ CPlayerPed*         (*FindPlayerPed)(int playerId);
 
 inline void RecalcGrassVars()
 {
-    fGrassFadeDist = 0.92f / (fGrassDistance - fGrassMinDistance);
+    fGrassFadeDist =     0.92f / (fGrassDistance - fGrassMinDistance);
     fGrassMidDistance =  0.75f * fGrassMinDistance;
     fGrassMid2Distance = 0.75f * fGrassMinDistance + 0.5f * (fGrassDistance - fGrassMinDistance);
+
+    fGrassDistanceSqr =     fGrassDistance     * fGrassDistance;
+    fGrassMinDistanceSqr =  fGrassMinDistance  * fGrassMinDistance;
+    fGrassFadeDistSqr =     fGrassFadeDist     * fGrassFadeDist;
+    fGrassMidDistanceSqr =  fGrassMidDistance  * fGrassMidDistance;
+    fGrassMid2DistanceSqr = fGrassMid2Distance * fGrassMid2Distance;
 }
 inline void PatchGrassDistance(bool revert)
 {
@@ -482,7 +489,7 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
 
         case 1:
             // Better to do that from Player Pos!
-            if(DistanceBetweenPoints(playerPos, plant->center) < fGrassMidDistance)
+            if((playerPos - plant->center).MagnitudeSqr() < fGrassMidDistanceSqr)
             {
                 return standartAtomics;
             }
@@ -493,7 +500,7 @@ extern "C" RpAtomic* DrawTriPlants_Inject(RpAtomic* standartAtomics, PPTriPlant*
 
         case 2:
             // Better to do that from Player Pos!
-            if(DistanceBetweenPoints(playerPos, plant->center) < fGrassMid2Distance)
+            if((playerPos - plant->center).MagnitudeSqr() < fGrassMid2DistanceSqr)
             {
                 return standartAtomics;
             }
@@ -653,6 +660,14 @@ inline float GetGrassAlphaScale(float distance)
     if(scale < 0) return 0;
     return scale;
 }
+inline float GetGrassAlphaScaleFromSQR(float distanceSqr)
+{
+    if(distanceSqr < fGrassMinDistanceSqr) return 1.0f;
+    
+    float scale = 1.0f - fGrassFadeDistSqr * (distanceSqr - fGrassMinDistanceSqr);
+    if(scale < 0) return 0;
+    return scale;
+}
 
 
 // ---------------------------------------------------------------------------------------
@@ -719,14 +734,7 @@ DECL_HOOKv(PlantMgrInit)
 static PPTriPlant plant;
 DECL_HOOKv(PlantMgrRender)
 {
-    if(TheCamera->m_bCamDirectlyBehind)
-    {
-        playerPos = FindPlayerPed(-1)->GetPosition();
-    }
-    else
-    {
-        playerPos = TheCamera->GetPosition();
-    }
+    playerPos = (TheCamera->m_bCamDirectlyBehind) ? FindPlayerPed(-1)->GetPosition() : TheCamera->GetPosition();
     
     RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)false);
     RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)true);
@@ -749,7 +757,7 @@ DECL_HOOKv(PlantMgrRender)
         {
             if(plantTris->m_createsPlants)
             {
-                float colBrightness = GetCurrentLighting(plantTris->m_ColLighting);
+                float colBrightness = GetCurrentLighting(plantTris->m_ColLighting, 0.7f);
                 CPlantSurfProp* surface = GetSurfacePtr(plantTris->m_nSurfaceType);
                 if(surface && IsSphereVisibleForCamera(TheCamera, &plantTris->m_Center, plantTris->m_SphereRadius))
                 {
@@ -759,7 +767,7 @@ DECL_HOOKv(PlantMgrRender)
                         if(surfProp.m_nModelId != 0xFFFF)
                         {
                             plant.color = *(RwRGBA*)&surfProp.m_Color;
-                            plant.color.alpha = (uint8_t)(GetGrassAlphaScale((camPos - plantTris->m_Center).Magnitude()) * plant.color.alpha);
+                            plant.color.alpha = (uint8_t)(GetGrassAlphaScaleFromSQR((camPos - plantTris->m_Center).MagnitudeSqr()) * plant.color.alpha);
 
                             if(plant.color.alpha != 0)
                             {
@@ -814,7 +822,7 @@ extern "C" void OnModLoad()
     
     if(!pGTASA || !hGTASA)
     {
-        logger->Info("Get a real GTA:SA first");
+        logger->Info("Only GTA:SA Android (v2.00 and v2.10 64-bit) supported by Planter!");
         return;
     }
 
@@ -824,12 +832,14 @@ extern "C" void OnModLoad()
         HOOKPLT(PlantSurfPropMgrInit,           pGTASA + 0x6721C8);
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x673C90);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x6726D0);
+        //HOOKBLX(PS2_GrassRandomizer,            pGTASA + 0x2CD388 + 0x1); // only on PC, uint64 -> uint32
     #else
         GrassMaterialApplying_BackTo =          pGTASA + 0x38F0D4;
         aml->Redirect(pGTASA + 0x38F0C0,        (uintptr_t)GrassMaterialApplying_Patch);
         HOOKBL(PlantSurfPropMgrInit,            pGTASA + 0x390DE0);
         HOOKPLT(PlantMgrInit,                   pGTASA + 0x846680);
         HOOKPLT(PlantMgrRender,                 pGTASA + 0x844308);
+        //HOOKBL(PS2_GrassRandomizer,             pGTASA + 0x38F02C); // only on PC, uint64 -> uint32
         
         aml->WriteFloat(pGTASA + 0x38F0D0,      400.0f * 400.0f); // for patches in fn PatchGrassDistance
     #endif
@@ -892,7 +902,7 @@ extern "C" void OnModLoad()
 
         int grassDist = DEFAULT_GRASS_DISTANCE;
         aml->MLSGetInt("GRSQUAL", &grassDist); clampint(0, 5, &grassDist);
-        /*if(grassDist != DEFAULT_GRASS_DISTANCE)*/ OnGrassDistanceChanged(1, grassDist, NULL);
+        OnGrassDistanceChanged(1, grassDist, NULL);
         sautils->AddClickableItem(eTypeOfSettings::SetType_Display, "Grass Distance", grassDist, 0, 5, aGrassDistanceSwitch, OnGrassDistanceChanged, NULL);
 
         grassLODify = DEFAULT_GRASS_LOD;
