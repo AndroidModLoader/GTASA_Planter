@@ -8,6 +8,6 @@ else
 	LOCAL_MODULE := SAPlanter64
 endif
 LOCAL_SRC_FILES := main.cpp mod/logger.cpp
-LOCAL_CFLAGS += -Ofast -mfloat-abi=softfp -DNDEBUG -std=c++17 #-fvisibility=hidden
+LOCAL_CFLAGS += -Ofast -DNDEBUG -std=c++17 -flto=thin -fno-math-errno -ffp-contract=fast -fno-semantic-interposition -fno-rtti -fno-exceptions -fvisibility-inlines-hidden -fvisibility=hidden
 LOCAL_LDLIBS += -llog
 include $(BUILD_SHARED_LIBRARY)
